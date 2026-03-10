@@ -1,90 +1,154 @@
+import os
 import logging
+import json
+from dotenv import load_dotenv # Добавляем импорт
 from collections import deque, defaultdict
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
 
+# Загружаем переменные из .env
+load_dotenv()
+
 # === НАСТРОЙКИ ===
-TELEGRAM_TOKEN = "8774538532:AAE6DtVDHCLgx2UzIgrwrYasKKmbLk1c4Kk"
-GEMINI_API_KEY = "AIzaSyBFeaiY0VdbuHAw1cixkl4AGFuA96dgIE0"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+HISTORY_FILE = "chat_history.json"
+MAX_HISTORY = 500 # Максимальное количество хранимых сообщений для каждого чата
 
-# Настройка логирования для отслеживания ошибок
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Проверка, что ключи загружены
+if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
+    raise ValueError("Ошибка: Токены не найдены в файле .env!")
+    
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Настройка Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-# Используем быструю и легкую модель, отлично подходящую для текста
 model = genai.GenerativeModel('gemini-2.5-flash') 
 
-# Хранилище сообщений: chat_id -> очередь из последних 200 сообщений
-# deque автоматически удаляет самые старые сообщения при превышении maxlen
-chat_history = defaultdict(lambda: deque(maxlen=200))
+# === ФАЙЛОВАЯ СИСТЕМА (Элегантное хранение) ===
+def load_history():
+    """Загружает историю из JSON файла при запуске."""
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+                # Восстанавливаем deque (очереди) с ограничением maxlen
+                return defaultdict(lambda: deque(maxlen=MAX_HISTORY),
+                                   {int(k): deque(v, maxlen=MAX_HISTORY) for k, v in data.items()})
+            except Exception as e:
+                logging.error(f"Ошибка чтения истории: {e}")
+    return defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 
+def save_history():
+    """Сохраняет текущую историю в JSON файл."""
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        # Преобразуем deque в обычные списки для сохранения
+        data = {k: list(v) for k, v in chat_history.items()}
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# Загружаем историю при старте
+chat_history = load_history()
+
+# === ОСНОВНАЯ ЛОГИКА ===
 async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет все входящие текстовые сообщения в память."""
+    """Сохраняет текстовые сообщения и обновляет файл."""
     if not update.message or not update.message.text:
         return
-    
+        
     chat_id = update.message.chat_id
-    user = update.message.from_user.first_name or update.message.from_user.username
-    text = update.message.text
+    username = update.message.from_user.username
+    first_name = update.message.from_user.first_name
     
-    # Сохраняем в формате "Имя: текст сообщения"
-    chat_history[chat_id].append(f"{user}: {text}")
+    # Формируем имя автора (приоритет юзернейму для удобного поиска)
+    author = f"@{username}" if username else first_name
 
-async def summarize(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /summary [n]. Собирает последние n сообщений и отправляет в Gemini."""
-    chat_id = update.message.chat_id
+    # Сохраняем сообщение как словарь для удобной фильтрации
+    chat_history[chat_id].append({
+        "author": author,
+        "text": update.message.text
+    })
     
-    # Проверяем, передал ли пользователь количество сообщений (по умолчанию 20)
-    n = 20
-    if context.args and context.args[0].isdigit():
-        n = int(context.args[0])
-        # Ограничим максимальный запрос, чтобы не упереться в лимиты памяти/токенов
-        n = min(n, 200) 
+    # Сразу обновляем файл
+    save_history()
+
+async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Умная команда /summary [j/w] [n] [@username]"""
+    chat_id = update.message.chat_id
+    args = context.args or []
+
+    # Настройки по умолчанию
+    style = "normal"
+    count = 20
+    target_user = None
+
+    # Разбираем аргументы (в любом порядке)
+    for arg in args:
+        if arg.lower() in ['j', 'w']:
+            style = arg.lower()
+        elif arg.isdigit():
+            count = int(arg)
+        elif arg.startswith('@'):
+            target_user = arg
+
+    # Ограничиваем запрос, чтобы не перегрузить API
+    count = min(count, 300)
 
     history = chat_history[chat_id]
-    
     if not history:
-        await update.message.reply_text("Я пока не видел ни одного сообщения в этом чате.")
+        await update.message.reply_text("Я пока не накопил сообщений для анализа.")
         return
 
-    # Берем последние n сообщений
-    messages_to_summarize = list(history)[-n:]
-    chat_text = "\n".join(messages_to_summarize)
-    
-    # Формируем промпт для нейросети
-    prompt = (
-        f"Сделай краткую, но информативную выжимку (суть) следующих {len(messages_to_summarize)} "
-        "сообщений из чата. Выдели главные темы обсуждения, кто что предлагал и к чему пришли. "
-        f"Вот сообщения:\n\n{chat_text}"
-    )
-    
-    # Сообщаем пользователю, что начали думать
-    await update.message.reply_text("Анализирую сообщения, подождите немного...")
+    # Фильтруем сообщения (отматываем с конца)
+    filtered_messages = []
+    for msg in reversed(history):
+        if target_user:
+            # Ищем сообщения конкретного пользователя
+            if msg["author"].lower() == target_user.lower():
+                filtered_messages.append(msg)
+        else:
+            filtered_messages.append(msg)
+            
+        if len(filtered_messages) == count:
+            break
+
+    # Разворачиваем обратно в хронологическом порядке
+    filtered_messages.reverse()
+
+    if not filtered_messages:
+        await update.message.reply_text("Не найдено сообщений по вашим критериям.")
+        return
+
+    # Формируем текст для нейросети
+    chat_text = "\n".join([f"{m['author']}: {m['text']}" for m in filtered_messages])
+    context_info = f"сообщений пользователя {target_user}" if target_user else "сообщений из чата"
+
+    # Выбираем промпт на основе флага
+    if style == 'w':
+        prompt = (f"Сделай строгий деловой отчет на основе следующих {len(filtered_messages)} {context_info}. "
+                  f"Выдели главное, суть, принятые решения и открытые задачи.\n\nТекст:\n{chat_text}")
+    elif style == 'j':
+        prompt = (f"Прочитай следующие {len(filtered_messages)} {context_info}. "
+                  f"Сделай очень смешной, саркастичный и ироничный пересказ. Высмей забавные моменты.\n\nТекст:\n{chat_text}")
+    else:
+        prompt = (f"Сделай максимально лаконичную и понятную выжимку следующих {len(filtered_messages)} {context_info}. "
+                  f"Только самая суть без воды, коротко и ясно.\n\nТекст:\n{chat_text}")
+
+    message = await update.message.reply_text("⏳ Читаю переписку...")
 
     try:
-        # Отправляем запрос в Gemini
         response = model.generate_content(prompt)
-        await update.message.reply_text(f"**Саммари последних {len(messages_to_summarize)} сообщений:**\n\n{response.text}", parse_mode='Markdown')
+        await message.edit_text(f"**Саммари ({len(filtered_messages)} сообщ.):**\n\n{response.text}", parse_mode='Markdown')
     except Exception as e:
-        logging.error(f"Ошибка Gemini API: {e}")
-        await update.message.reply_text("Произошла ошибка при обращении к нейросети. Попробуйте позже.")
+        logging.error(f"Ошибка Gemini: {e}")
+        await message.edit_text("Произошла ошибка при обращении к нейросети.")
 
 def main():
-    """Запуск бота."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Обработчик команды /summary
-    application.add_handler(CommandHandler("summary", summarize))
     
-    # Обработчик всех текстовых сообщений (кроме команд), чтобы бот их запоминал
+    # Теперь у нас одна мощная команда
+    application.add_handler(CommandHandler("summary", cmd_summary))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message))
-
-    # Запускаем бота
+    
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
