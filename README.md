@@ -1,70 +1,106 @@
----
-🤖 Gemini Chat Summarizer Bot
-Телеграм-бот, который спасает ваше время и нервы в активных группах. Он читает историю сообщений и с помощью Google Gemini 1.5/2.5 Flash выдает краткую выжимку: о чем спорили, что решили и кто больше всех «отличился».
+# 🤖 Gemini Chat Summarizer Bot
 
-✨ Основные фишки
-Умное саммари: Делает выжимку последних N сообщений.
-
-Стили вывода: * Лаконичный (по умолчанию) — только суть.
-
-w (Work) — строгий деловой отчет с задачами.
-
-j (Joke) — ироничный и смешной пересказ.
-
-Персональный отчет: Можно попросить саммари по конкретному пользователю через @username.
-
-Память: Не боится перезагрузки — сохраняет историю чатов в chat_history.json.
-
-Гибкий парсинг: Команды понимают аргументы в любом порядке.
+Telegram-бот на базе **Google Gemini API**, предназначенный для автоматического анализа и суммаризации переписки в групповых чатах. Позволяет мгновенно получить суть обсуждения, выделить задачи или просто посмеяться над контекстом, не перечитывая сотни сообщений.
 
 ---
 
-🚀 Быстрый старт
-1. Подготовка
+### **📋 Требования**
 
-Убедитесь, что у вас установлен Python 3.9+.
+* **Python:** 3.9 или выше
+* **Gemini API Key:** Получите в [Google AI Studio](https://aistudio.google.com/)
+* **Telegram Bot Token:** Получите у [@BotFather](https://t.me/botfather)
 
-Bash
-git clone https://github.com/your-username/gemini-summarizer-bot.git
-cd gemini-summarizer-bot
-pip install -r requirements.txt
-2. Настройка окружения
+---
 
-Создайте файл .env в корневой папке и добавьте свои ключи:
+### **🛠 Установка на VPS (Ubuntu/Debian)**
 
-Code snippet
-TELEGRAM_TOKEN=ваш_токен_от_BotFather
-GEMINI_API_KEY=ваш_ключ_от_Google_AI_Studio
-3. Запуск
+### **1. Подготовка системы**
 
-Bash
-python bot.py
-🛠 Использование в Telegram
-Добавьте бота в группу, сделайте его администратором (чтобы он видел сообщения) и используйте команду /summary.
+Обновите пакеты и установите необходимые системные зависимости:
 
-Примеры команд:
+```bash
+sudo apt update && sudo apt install python3-pip python3-venv -y
+```
 
-/summary — краткая суть последних 20 сообщений.
+### **2. Клонирование и настройка**
 
-/summary 50 — выжимка последних 50 сообщений.
+Создайте директорию проекта и настройте виртуальное окружение:
 
-/summary j 30 — покекать с того, что написали за последние 30 сообщений.
+```bash
+mkdir gemini_bot && cd gemini_bot
+python3 -m venv venv
+source venv/bin/activate
+pip install python-telegram-bot google-generativeai python-dotenv
+```
 
-/summary @sergey w 100 — серьезный отчет по последним 100 сообщениям пользователя @sergey.
+### **3. Размещение файлов**
 
-📦 Стек технологий
-Язык: Python
+Поместите в папку /home/USER/gemini_bot следующие компоненты:
 
-Бот: python-telegram-bot
+bot.py — основной код бота.
 
-AI: Google Generative AI (Gemini)
+.env — файл с настройками (содержимое: TELEGRAM_TOKEN=... и GEMINI_API_KEY=...).
 
-Хранение: JSON (Simple & Clean)
+chat_history.json — (создастся автоматически) файл для хранения истории сообщений.
 
-Конфиг: python-dotenv
+---
 
-🛡 Безопасность
-Файлы .env и chat_history.json добавлены в .gitignore. Никогда не выкладывайте свои API ключи в открытый доступ!
+### **⚙️ Автозапуск через Systemd**
 
-🤝 Контакты
-Разработано с душой. Если есть идеи по улучшению — открывайте Issue или присылайте Pull Request.
+Чтобы бот работал 24/7 и автоматически перезапускался при сбоях или перезагрузке сервера, настройте его как системную службу.
+
+### **1. Создание файла службы**
+```bash
+sudo nano /etc/systemd/system/gemini_bot.service
+```
+
+### **2. Конфигурация**
+
+Вставьте следующее содержимое, заменив USER на ваше реальное имя пользователя в системе:
+```ini
+[Unit]
+Description=Gemini Chat Summarizer Bot
+After=network.target
+
+[Service]
+# Путь к папке с ботом
+WorkingDirectory=/home/USER/gemini_bot
+# Путь к python внутри venv и путь к скрипту
+ExecStart=/home/USER/gemini_bot/venv/bin/python3 /home/USER/gemini_bot/bot.py
+Restart=always
+RestartSec=5
+User=USER
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### **3. Активация службы**
+
+Выполните команды по очереди для регистрации и запуска:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable gemini_bot
+sudo systemctl start gemini_bot
+```
+### **📖 Использование и команды**
+
+Аргументы команды /summary можно указывать в любом порядке.
+
+| Действие | Команда |
+| --- | --- |
+| **Краткая суть** |	`/summary (последние 20 сообщений)` |
+| **Выбор объема** |	`/summary 100 (последние 100 сообщений)` |
+| **Шуточный стиль** |	`/summary j 50` |
+| **Деловой стиль** |	`/summary w 30` |
+| **По пользователю** |	`/summary @username 50` |
+
+## ⚠️ **Решение проблем**
+
+**Бот не видит сообщения:** Убедитесь, что бот назначен **Администратором** группы и у него есть доступ к сообщениям (отключен Privacy Mode в @BotFather).
+
+**Ошибка API Gemini:** Проверьте правильность ключа в `.env` и лимиты в Google AI Studio.
+
+**Бот не отвечает:** Проверьте статус службы через `sudo systemctl status gemini_bot` и логи.
+
+---
