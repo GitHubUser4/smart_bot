@@ -27,7 +27,7 @@ sudo apt update && sudo apt install python3-pip python3-venv -y
 Создайте директорию проекта и настройте виртуальное окружение:
 
 ```bash
-mkdir gemini_bot && cd gemini_bot
+mkdir smart_bot && cd smart_bot
 python3 -m venv venv
 source venv/bin/activate
 pip install python-telegram-bot google-generativeai python-dotenv
@@ -35,7 +35,7 @@ pip install python-telegram-bot google-generativeai python-dotenv
 
 ### **3. Размещение файлов**
 
-Поместите в папку /home/USER/gemini_bot следующие компоненты:
+Поместите в папку /home/USER/smart_bot следующие компоненты:
 
 bot.py — основной код бота.
 
@@ -51,7 +51,7 @@ chat_history.json — (создастся автоматически) файл �
 
 ### **1. Создание файла службы**
 ```bash
-sudo nano /etc/systemd/system/gemini_bot.service
+sudo nano /etc/systemd/system/smart_bot.service
 ```
 
 ### **2. Конфигурация**
@@ -64,9 +64,9 @@ After=network.target
 
 [Service]
 # Путь к папке с ботом
-WorkingDirectory=/home/USER/gemini_bot
+WorkingDirectory=/home/USER/smart_bot
 # Путь к python внутри venv и путь к скрипту
-ExecStart=/home/USER/gemini_bot/venv/bin/python3 /home/USER/gemini_bot/bot.py
+ExecStart=/home/USER/smart_bot/venv/bin/python3 /home/USER/smart_bot/bot.py
 Restart=always
 RestartSec=5
 User=USER
