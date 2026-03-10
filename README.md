@@ -80,8 +80,8 @@ WantedBy=multi-user.target
 Выполните команды по очереди для регистрации и запуска:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable gemini_bot
-sudo systemctl start gemini_bot
+sudo systemctl enable smart_bot
+sudo systemctl start smart_bot
 ```
 ### **📖 Использование и команды**
 
@@ -101,6 +101,6 @@ sudo systemctl start gemini_bot
 
 **Ошибка API Gemini:** Проверьте правильность ключа в `.env` и лимиты в Google AI Studio.
 
-**Бот не отвечает:** Проверьте статус службы через `sudo systemctl status gemini_bot` и логи.
+**Бот не отвечает:** Проверьте статус службы через `sudo systemctl status smart_bot` и логи.
 
 ---
