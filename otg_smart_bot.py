@@ -147,10 +147,19 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(res_text) > 4000:
             res_text = res_text[:3950] + "...\n\n*(отрезано из-за лимита длины)*"
         
-        await message.edit_text(f"**Саммари ({len(filtered_messages)} сообщ.):**\n\n{res_text}", parse_mode='Markdown')
+        full_response = f"**Саммари ({len(filtered_messages)} сообщ.):**\n\n{res_text}"
+
+        try:
+            # Попытка №1: Красивая разметка
+            await message.edit_text(full_response, parse_mode='Markdown')
+        except Exception as parse_error:
+            # Попытка №2: Если разметка битая, отправляем чистый текст
+            logging.warning(f"Ошибка разметки Markdown: {parse_error}")
+            await message.edit_text(full_response.replace('*', '').replace('_', ''), parse_mode=None)
+
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
-        await message.edit_text("Не удалось сгенерировать или отправить краткий отчет.")
+        logging.error(f"Критическая ошибка: {e}")
+        await message.edit_text("Не удалось обработать ответ от нейросети.")
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
