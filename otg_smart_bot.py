@@ -20,7 +20,7 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
