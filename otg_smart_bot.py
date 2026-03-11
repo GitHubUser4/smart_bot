@@ -73,6 +73,7 @@ async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Умная команда /summary [j/w] [n] [@username]"""
+    limit_instruction = "ВАЖНО: Твой ответ ОБЯЗАТЕЛЬНО должен быть короче 4000 символов, чтобы уместиться в одно сообщение Telegram. Пиши максимально емко."
     chat_id = update.message.chat_id
     args = context.args or []
 
@@ -124,31 +125,37 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Выбираем промпт на основе флага
     if style == 'w':
-        prompt = (f"Сделай строгий деловой отчет на основе следующих {len(filtered_messages)} {context_info}. "
-                  f"Выдели главное, суть, принятые решения и открытые задачи.\n\nТекст:\n{chat_text}")
+        prompt = (f"{limit_instruction}\n\n"
+                  f"Сделай строгий деловой отчет на основе последних {len(filtered_messages)} сообщений. "
+                  f"Выдели суть, принятые решения и задачи. Текст сообщений:\n\n{chat_text}")
     elif style == 'j':
-        prompt = (f"Прочитай следующие {len(filtered_messages)} {context_info}. "
-                  f"Сделай очень смешной, саркастичный и ироничный пересказ. Высмей забавные моменты.\n\nТекст:\n{chat_text}")
+        prompt = (f"{limit_instruction}\n\n"
+                  f"Сделай смешной и ироничный пересказ последних {len(filtered_messages)} сообщений. "
+                  f"Высмей ключевые моменты. Текст сообщений:\n\n{chat_text}")
     else:
-        prompt = (f"Сделай максимально лаконичную и понятную выжимку следующих {len(filtered_messages)} {context_info}. "
-                  f"Только самая суть без воды, коротко и ясно.\n\nТекст:\n{chat_text}")
+        prompt = (f"{limit_instruction}\n\n"
+                  f"Сделай краткую выжимку последних {len(filtered_messages)} сообщений. "
+                  f"Только факты и самая суть. Текст сообщений:\n\n{chat_text}")
 
     message = await update.message.reply_text("⏳ Читаю переписку...")
 
     try:
         response = model.generate_content(prompt)
-        await message.edit_text(f"**Саммари ({len(filtered_messages)} сообщ.):**\n\n{response.text}", parse_mode='Markdown')
+        res_text = response.text
+        
+        # Резервная проверка: если ИИ всё же превысил лимит, мягко обрезаем
+        if len(res_text) > 4000:
+            res_text = res_text[:3950] + "...\n\n*(отрезано из-за лимита длины)*"
+        
+        await message.edit_text(f"**Саммари ({len(filtered_messages)} сообщ.):**\n\n{res_text}", parse_mode='Markdown')
     except Exception as e:
-        logging.error(f"Ошибка Gemini: {e}")
-        await message.edit_text("Произошла ошибка при обращении к нейросети.")
+        logging.error(f"Ошибка: {e}")
+        await message.edit_text("Не удалось сгенерировать или отправить краткий отчет.")
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # Теперь у нас одна мощная команда
     application.add_handler(CommandHandler("summary", cmd_summary))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message))
-    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message)) 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
