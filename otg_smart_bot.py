@@ -59,8 +59,9 @@ async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username_str = f"@{user.username.lower()}" if user.username else ""
 
     chat_history[chat_id].append({
+        "user_id": user.id,  # Уникальный и вечный ID
         "author": full_name,
-        "username": username_str, # Сохраняем ник отдельно для поиска по @
+        "username": username_str,
         "text": update.message.text
     })
 
@@ -112,9 +113,17 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 4. Вычисляем самого активного участника (если нет фильтра по юзеру)
     most_active_text = ""
     if not target_user and filtered_messages:
-        authors = [m["author"] for m in filtered_messages]
-        top_author = Counter(authors).most_common(1)[0][0]
-        most_active_text = f"\n\n🏆 **Самый активный болтун:** {top_author}"
+        # Группируем по ID (если есть) или по имени (для старых логов)
+        authors = [m.get("user_id", m["author"]) for m in filtered_messages]
+
+        # Чтобы в статистике красиво вывести имя, а не цифры ID:
+        top_user_val = Counter(authors).most_common(1)[0][0]
+
+        # Находим имя этого счастливчика для вывода в чат
+        top_author_name = next(m["author"] for m in filtered_messages 
+                               if m.get("user_id") == top_user_val or m["author"] == top_user_val)
+
+        most_active_text = f"\n\n🏆 **Самый активный болтун:** {top_author_name}"
 
     limit_instruction = "ВАЖНО: Твой ответ ОБЯЗАТЕЛЬНО должен быть короче 4000 символов. Пиши максимально емко."
 
