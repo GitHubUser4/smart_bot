@@ -1,6 +1,8 @@
 import os
 import logging
 import json
+import time
+import re
 from dotenv import load_dotenv
 from collections import deque, defaultdict, Counter
 from telegram import Update
@@ -12,7 +14,7 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 HISTORY_FILE = "chat_history.json"
-MAX_HISTORY = 500 
+MAX_HISTORY = 1000 
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("Ошибка: Токены не найдены в файле .env!")
@@ -20,7 +22,7 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -47,22 +49,21 @@ async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     user = update.message.from_user
     
-    # 3. Собираем имя и фамилию
     first = user.first_name or ""
     last = user.last_name or ""
     full_name = f"{first} {last}".strip()
     
-    # Если имени вообще нет (бывает редко), берем ник
     if not full_name:
         full_name = f"@{user.username}" if user.username else "Аноним"
 
     username_str = f"@{user.username.lower()}" if user.username else ""
 
     chat_history[chat_id].append({
-        "user_id": user.id,  # Уникальный и вечный ID
+        "user_id": user.id,
         "author": full_name,
         "username": username_str,
-        "text": update.message.text
+        "text": update.message.text,
+        "timestamp": time.time() # Сохраняем текущее время
     })
 
     save_history()
@@ -72,18 +73,27 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
 
     style = "normal"
-    count = 20
+    count_limit = 20
+    time_limit = None
     target_user = None
 
+    # Парсим аргументы
     for arg in args:
-        if arg.lower() == 'j':
+        arg_lower = arg.lower()
+        if arg_lower == 'j':
             style = 'j'
+        elif re.match(r'^\d+[mhd]$', arg_lower):
+            # Если формат 30m, 5h, 2d
+            val = int(arg_lower[:-1])
+            unit = arg_lower[-1]
+            if unit == 'm': time_limit = val * 60
+            elif unit == 'h': time_limit = val * 3600
+            elif unit == 'd': time_limit = val * 86400
         elif arg.isdigit():
-            count = int(arg)
+            count_limit = int(arg)
         elif arg.startswith('@'):
-            target_user = arg.lower()
+            target_user = arg_lower
 
-    count = min(count, 300)
     history = chat_history[chat_id]
     
     if not history:
@@ -91,15 +101,28 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     filtered_messages = []
+    current_time = time.time()
+
     for msg in reversed(history):
+        # Фильтр по пользователю
         if target_user:
-            # Ищем по сохраненному username или если кто-то упоминается по имени с @
-            if msg.get("username") == target_user or msg.get("author", "").lower() == target_user[1:]:
+            if msg.get("username") != target_user and msg.get("author", "").lower() != target_user[1:]:
+                continue
+
+        # Фильтр по времени или количеству
+        if time_limit:
+            msg_time = msg.get("timestamp", 0)
+            if current_time - msg_time <= time_limit:
                 filtered_messages.append(msg)
+            else:
+                break # Дошли до сообщений старше указанного времени
         else:
             filtered_messages.append(msg)
+            if len(filtered_messages) == count_limit:
+                break
 
-        if len(filtered_messages) == count:
+        # Жесткий лимит, чтобы не перегрузить API (даже если за 1 час написали 1000 сообщений)
+        if len(filtered_messages) >= 500:
             break
 
     filtered_messages.reverse()
@@ -110,28 +133,22 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_text = "\n".join([f"{m['author']}: {m['text']}" for m in filtered_messages])
     
-    # 4. Вычисляем самого активного участника (если нет фильтра по юзеру)
     most_active_text = ""
     if not target_user and filtered_messages:
-        # Группируем по ID (если есть) или по имени (для старых логов)
         authors = [m.get("user_id", m["author"]) for m in filtered_messages]
-
-        # Чтобы в статистике красиво вывести имя, а не цифры ID:
         top_user_val = Counter(authors).most_common(1)[0][0]
-
-        # Находим имя этого счастливчика для вывода в чат
+        
         top_author_name = next(m["author"] for m in filtered_messages 
                                if m.get("user_id") == top_user_val or m["author"] == top_user_val)
-
+        
         most_active_text = f"\n\n🏆 **Самый активный болтун:** {top_author_name}"
 
     limit_instruction = "ВАЖНО: Твой ответ ОБЯЗАТЕЛЬНО должен быть короче 4000 символов. Пиши максимально емко."
 
-    # 1 и 2. Убрали 'w', разделили логику имен для 'j' и 'normal'
     if style == 'j':
         prompt = (f"{limit_instruction}\n\n"
                   f"Сделай смешной и ироничный пересказ последних {len(filtered_messages)} сообщений. "
-                  f"ОБЯЗАТЕЛЬНО используй Имена и Фамилии авторов (как они указаны в логе), высмеивая конкретные реплики конкретных людей. Текст:\n\n{chat_text}")
+                  f"ОБЯЗАТЕЛЬНО используй Имена и Фамилии авторов (как они указаны в логе), высмеивая конкретные реплики конкретных людей, иронизируй. Текст:\n\n{chat_text}")
     else:
         prompt = (f"{limit_instruction}\n\n"
                   f"Сделай краткую выжимку последних {len(filtered_messages)} сообщений. "
@@ -152,7 +169,6 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.edit_text(full_response, parse_mode='Markdown')
         except Exception as parse_error:
             logging.warning(f"Ошибка разметки Markdown: {parse_error}")
-            # Чистим текст от битой разметки, но оставляем значок кубка
             clean_text = full_response.replace('*', '').replace('_', '')
             await message.edit_text(clean_text, parse_mode=None)
 
