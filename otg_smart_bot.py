@@ -73,6 +73,7 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
 
     style = "normal"
+song_mode = False  # <-- ДОБАВИЛИ ФЛАГ
     count_limit = 20
     time_limit = None
     target_user = None
@@ -82,6 +83,8 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         arg_lower = arg.lower()
         if arg_lower == 'j':
             style = 'j'
+        elif arg_lower == 's':       # <-- ДОБАВИЛИ ПРОВЕРКУ НА ПЕСНЮ
+            song_mode = True
         elif re.match(r'^\d+[mhd]$', arg_lower):
             # Если формат 30m, 5h, 2d
             val = int(arg_lower[:-1])
@@ -144,7 +147,22 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         most_active_text = f"\n\n🏆 **Самый активный болтун:** {top_author_name}"
 
     limit_instruction = "ВАЖНО: Твой ответ ОБЯЗАТЕЛЬНО должен быть короче 4000 символов. Пиши максимально емко."
+    # 1. Формируем инструкцию для песни, если включен режим 's'
+    song_instruction = ""
+    if song_mode:
+        if style == 'j':
+            song_instruction = (
+                "\n\nВ самом конце ответа напиши один короткий куплет (4-6 строк) в стиле дерзкой панк-рок или рэп-песни. "
+                "Жестко и провокационно зарифмуй главную тему обсуждения, подколи отличившихся авторов по именам. "
+                "Выдели куплет эмодзи 🎸."
+            )
+        else:
+            song_instruction = (
+                "\n\nВ самом конце ответа напиши одно короткое четверостишие, "
+                "которое поэтично и красиво резюмирует суть обсуждения. Выдели куплет эмодзи 🎵."
+            )
 
+    # 2. Основные промпты (добавляем к ним song_instruction)
     if style == 'j':
         prompt = (f"{limit_instruction}\n\n"
                   f"Ты — ироничный обозреватель закрытого сообщества IT-шников. Твоя задача — сделать едкий и короткий ПЕРЕСКАЗ последних {len(filtered_messages)} сообщений.\n\n"
@@ -154,11 +172,11 @@ async def cmd_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   f"3. БУДЬ КРАТОК: не пытайся упомянуть каждое сообщение. Выбери 3-4 главные темы и высмей их общим планом.\n"
                   f"4. СТАРАЙСЯ ИЗБЕГАТЬ ДОСЛОВНЫХ ЦИТАТ: пересказывай суть своими словами, используя Имена и Фамилии участников.\n"
                   f"5. Текст должен выглядеть как цельная история (фельетон), а не как список событий.\n\n"
-                  f"Текст для анализа:\n\n{chat_text}")
+                  f"Текст для анализа:\n\n{chat_text}{song_instruction}") # <-- ПРИКЛЕИЛИ ИНСТРУКЦИЮ ПЕСНИ
     else:
         prompt = (f"{limit_instruction}\n\n"
                   f"Сделай краткую выжимку последних {len(filtered_messages)} сообщений. "
-                  f"Только факты и суть обсуждения. Привязываться к именам авторов не обязательно. Текст:\n\n{chat_text}")
+                  f"Только факты и суть обсуждения. Текст:\n\n{chat_text}{song_instruction}") # <-- ПРИКЛЕИЛИ ИНСТРУКЦИЮ ПЕСНИ
 
     message = await update.message.reply_text("⏳ Читаю переписку...")
 
